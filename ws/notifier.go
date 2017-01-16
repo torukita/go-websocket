@@ -1,9 +1,11 @@
 package ws
 
 import (
+	"errors"
 	"fmt"
 	"time"
 	log "github.com/Sirupsen/logrus"
+	"context"
 )
 
 type MonitorFunc func() []byte
@@ -17,10 +19,12 @@ type Notifier struct {
 	timer      time.Duration
 }
 
-var defaultMonitorHandler MonitorFunc = func() []byte {
-	str := fmt.Sprintf("[%v] sending data ...", time.Now())
-	log.Info(str)
-	return []byte(str)	
+func defaultMonitorHandler() MonitorFunc {
+	return func() []byte {
+		str := fmt.Sprintf("[%v] sending data ...", time.Now())
+		log.Info(str)
+		return []byte(str)
+	}
 }
 
 func NewNotifier() *Notifier {
@@ -29,31 +33,46 @@ func NewNotifier() *Notifier {
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		message:    make(chan []byte),
-		handler:    defaultMonitorHandler,
+		handler:    defaultMonitorHandler(),
 		timer:      1 * time.Second,
 	}
 }
 
-func (n *Notifier) SetHandler(fn MonitorFunc) {
+func (n *Notifier) SetHandler(t time.Duration, fn MonitorFunc) {
+	n.timer = t
 	n.handler = fn
 }
 
-func (n *Notifier) SetTimer(t time.Duration) {
-	n.timer = t
+func (n *Notifier) doExecHandler() []byte {
+	return n.handler()
 }
 
-func (n *Notifier) loopExec(fn MonitorFunc) {
+func (n *Notifier) doLoopExec(ctx context.Context) {
 	for {
 		time.Sleep(n.timer)
 		if len(n.clients) > 0 {
-			n.Notify(fn())
+			recvCh := make(chan []byte, 1)
+			ctx, cancel := context.WithTimeout(ctx, n.timer /2)
+			defer func() {
+				log.Error("notifier: canceled")
+				cancel()
+			}()
+			go func() {
+				recvCh <- n.doExecHandler()
+			}()
+			select {
+			case <-ctx.Done():
+				log.Error("notifier:", ctx.Err())
+			case recv := <- recvCh:
+				n.Notify(recv)
+			}
 		}
 	}
 }
 
-func (n *Notifier) Run() {
+func (n *Notifier) Run(ctx context.Context) {
 	go func() {
-		n.loopExec(n.handler)
+		n.doLoopExec(ctx)
 	}()
 	go n.run()
 }
@@ -74,14 +93,17 @@ func (n *Notifier) run() {
 		case client := <- n.unregister:
 			if _, ok := n.clients[client]; ok {
 				delete(n.clients, client)
-				client.Close()
 			}
 		}
 	}
 }
 
-func (n *Notifier) Register(c *Client) {
+func (n *Notifier) Register(c *Client) error {
+	if len(n.clients) > 2 {
+		return errors.New("hoge")
+    }
 	n.register <- c
+	return nil
 }
 
 func (n *Notifier) UnRegister(c *Client) {

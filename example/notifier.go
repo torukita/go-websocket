@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"time"
+	"context"
 	"github.com/labstack/echo"
 	"github.com/labstack/echo/middleware"
 	"github.com/torukita/go-websocket/ws"
@@ -13,26 +14,24 @@ import (
 
 var (
 	logConfig = middleware.LoggerConfig{
-		Format: "${time_rfc3339} ${status} ${method} ${uri}\n",
+		Format: "${time_rfc3339} ${status} ${method} ${uri} ${remote_ip} ${latency_human}\n",
 	}
 	upgrader = websocket.Upgrader{}
-	log = logrus.New()	
+	log = logrus.New()
+	interval = time.Duration(1 * time.Second)
 )
 
 func Example(n *ws.Notifier) echo.HandlerFunc {
 	return func(w echo.Context) error {
 		c, err := upgrader.Upgrade(w.Response(), w.Request(), nil)
 		if err != nil {
-			log.Error(err)
 			return err
 		}
 		defer c.Close()
 
-		client := ws.NewClient(c)
-		n.Register(client)
-		defer n.UnRegister(client)
+		client := ws.NewClient(c, n)
 		client.Start()
-		log.Info("Closed WebSocket Client")
+		defer client.Close()
 		return nil
 	}
 }
@@ -42,20 +41,22 @@ type Data struct {
 	Message string
 }
 
-var monitorExec ws.MonitorFunc = func() []byte {
-	d := Data{
-		Time: fmt.Sprint(time.Now()),
-		Message: "This is a example message",
+func monitorExec() ws.MonitorFunc {
+	return func() []byte {
+		d := Data{
+			Time: fmt.Sprint(time.Now()),
+			Message: "This is a example message",
+		}
+		v, _ := json.Marshal(d)
+		return v
 	}
-	v, _ := json.Marshal(d)
-	return v
 }
+
 
 func Run(addr string, debug bool) {
 	broker := ws.NewNotifier()
-	broker.SetTimer(500 * time.Millisecond)
-	broker.SetHandler(monitorExec)
-	broker.Run()
+	broker.SetHandler(interval, monitorExec())
+	broker.Run(context.Background())
 	
 	e := echo.New()
 	e.Debug = debug
