@@ -3,12 +3,11 @@ package main
 import (
 	"fmt"
 	"time"
-	"context"
 	"github.com/labstack/echo"
 	"github.com/labstack/echo/middleware"
 	"github.com/torukita/go-websocket/ws"
 	"github.com/gorilla/websocket"
-	"github.com/Sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 	"encoding/json"
 )
 
@@ -21,7 +20,7 @@ var (
 	interval = time.Duration(1 * time.Second)
 )
 
-func Example(n *ws.Notifier) echo.HandlerFunc {
+func Example(n ws.Notifier) echo.HandlerFunc {
 	return func(w echo.Context) error {
 		c, err := upgrader.Upgrade(w.Response(), w.Request(), nil)
 		if err != nil {
@@ -43,6 +42,7 @@ type Data struct {
 
 func monitorExec() ws.MonitorFunc {
 	return func() []byte {
+//		time.Sleep(2 * time.Second) 
 		d := Data{
 			Time: fmt.Sprint(time.Now()),
 			Message: "This is a example message",
@@ -52,11 +52,10 @@ func monitorExec() ws.MonitorFunc {
 	}
 }
 
-
 func Run(addr string, debug bool) {
-	broker := ws.NewNotifier()
-	broker.SetHandler(interval, monitorExec())
-	broker.Run(context.Background())
+	cmd := ws.NewMonitorCmd(1 * time.Second, monitorExec())
+	broker := ws.NewNotifier("hoge", cmd)
+	broker.Run()
 	
 	e := echo.New()
 	e.Debug = debug

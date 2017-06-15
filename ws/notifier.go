@@ -2,86 +2,71 @@ package ws
 
 import (
 	"errors"
-	"fmt"
 	"time"
-	log "github.com/Sirupsen/logrus"
-	"context"
 )
 
-type MonitorFunc func() []byte
+var (
+	maxClients = 10
+)
 
-type Notifier struct {
+type notifier struct {
+	name       string
 	clients    map[*Client]bool
 	register   chan *Client
 	unregister chan *Client
 	message    chan []byte
-	handler    MonitorFunc
-	timer      time.Duration
+	cmd        MonitorCmd
 }
 
-func defaultMonitorHandler() MonitorFunc {
-	return func() []byte {
-		str := fmt.Sprintf("[%v] sending data ...", time.Now())
-		log.Info(str)
-		return []byte(str)
-	}
+type Notifier interface {
+	Run()
+	Notify([]byte)
+	Regist(*Client) error
+	UnRegist(*Client)
 }
 
-func NewNotifier() *Notifier {
-	return &Notifier {
+func NewNotifier(name string, fn MonitorCmd) Notifier {
+	return &notifier {
+		name:       name,
 		clients:    make(map[*Client]bool),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		message:    make(chan []byte),
-		handler:    defaultMonitorHandler(),
-		timer:      1 * time.Second,
+		cmd: fn,
 	}
 }
 
-func (n *Notifier) SetHandler(t time.Duration, fn MonitorFunc) {
-	n.timer = t
-	n.handler = fn
-}
-
-func (n *Notifier) doExecHandler() []byte {
-	return n.handler()
-}
-
-func (n *Notifier) doLoopExec(ctx context.Context) {
+func (n *notifier) doLoopExec() {
+	t := time.NewTicker(n.cmd.GetInterval())
 	for {
-		time.Sleep(n.timer)
-		if len(n.clients) > 0 {
-			recvCh := make(chan []byte, 1)
-			ctx, cancel := context.WithTimeout(ctx, n.timer /2)
-			defer func() {
-				log.Error("notifier: canceled")
-				cancel()
-			}()
-			go func() {
-				recvCh <- n.doExecHandler()
-			}()
-			select {
-			case <-ctx.Done():
-				log.Error("notifier:", ctx.Err())
-			case recv := <- recvCh:
-				n.Notify(recv)
+		select {
+		case <- t.C:
+			if len(n.clients) > 0 {
+				result, err := n.cmd.Do()
+				if err != nil {
+					logger.Errorf("notifier(%s): %s", n.name, err)
+					continue
+				}
+				n.Notify(result)
 			}
+		default:
 		}
 	}
+	t.Stop()
 }
 
-func (n *Notifier) Run(ctx context.Context) {
+func (n *notifier) Run() {
 	go func() {
-		n.doLoopExec(ctx)
+		n.doLoopExec()
 	}()
 	go n.run()
 }
 
-func (n *Notifier) Notify(msg []byte) {
+func (n *notifier) Notify(msg []byte) {
 	n.message <- msg
 }
 
-func (n *Notifier) run() {
+func (n *notifier) run() {
 	for {
 		select {
 		case message := <- n.message:
@@ -98,15 +83,15 @@ func (n *Notifier) run() {
 	}
 }
 
-func (n *Notifier) Register(c *Client) error {
-	if len(n.clients) > 2 {
-		return errors.New("hoge")
+func (n *notifier) Regist(c *Client) error {
+	if len(n.clients) >= maxClients {
+		return errors.New("notifer: reached max registration")
     }
 	n.register <- c
 	return nil
 }
 
-func (n *Notifier) UnRegister(c *Client) {
+func (n *notifier) UnRegist(c *Client) {
 	n.unregister <- c
 }
 

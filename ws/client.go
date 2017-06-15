@@ -2,25 +2,27 @@ package ws
 
 import (
 	"github.com/gorilla/websocket"
-	log "github.com/Sirupsen/logrus"
 )
+
 
 type Client struct {
 	conn    *websocket.Conn
 	message chan []byte
-	notifier  *Notifier
+	broker  Notifier
 }
 
-func NewClient(conn *websocket.Conn, notifier *Notifier) *Client {
+func NewClient(conn *websocket.Conn, broker Notifier) *Client {
 	return &Client{
 		conn: conn,
 		message: make(chan []byte),
-		notifier: notifier,
+		broker: broker,
 	}
 }
 
+
 func (c *Client) Start() {
-	if err := c.notifier.Register(c); err != nil {
+	if err := c.broker.Regist(c); err != nil {
+		logger.Error(err)
 		return
 	}
 	go func () {
@@ -33,7 +35,7 @@ func (c *Client) Start() {
 					return
 				}
 				if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-					log.Error(err)
+					logger.Error(err)
 					break LOOP
 				}
 			}
@@ -44,12 +46,12 @@ func (c *Client) Start() {
 		_, msg, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway) {
-				log.Warnf("Client closed connection: %v", err)
+				logger.Warnf("Client closed connection: %v", err)
 			}
 			break
 		}
 		// Never want to receive message from client
-		log.Warnf("Recieved message from client: %s", string(msg))
+		logger.Warnf("Recieved message from client: %s", string(msg))
 		break
 	}
 }
@@ -59,10 +61,10 @@ func (c *Client) Send(msg []byte) {
 }
 
 func (c *Client) Close() {
-	c.notifier.UnRegister(c)
+	c.broker.UnRegist(c)
 	close(c.message)
 }
 
 func (c *Client) Dump() {
-	log.Infof("%v", c.conn.RemoteAddr())
+	logger.Infof("%v", c.conn.RemoteAddr())
 }
