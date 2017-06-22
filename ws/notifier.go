@@ -49,7 +49,6 @@ func (n *notifier) doLoopExec() {
 				}
 				n.Notify(result)
 			}
-		default:
 		}
 	}
 	t.Stop()
